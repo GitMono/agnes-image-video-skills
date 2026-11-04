@@ -54,7 +54,7 @@ def main():
         choices=["auto", "cn", "global"],
         help="区域：auto（有 CN 密钥优先用中国区）、cn、global。默认 auto",
     )
-    parser.add_argument("--poll-interval", type=int, default=2, help="轮询间隔秒数（默认 2）")
+    parser.add_argument("--poll-interval", type=int, default=10, help="轮询间隔秒数（默认 10）")
     parser.add_argument("--timeout", type=int, default=600, help="轮询超时秒数（默认 600）")
     args = parser.parse_args()
 
@@ -94,7 +94,7 @@ def main():
 
     out = args.output or f"agnes_vid_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.mp4"
     print("  下载视频…")
-    agnes_api.download(video_url, out, cfg["api_key"])
+    agnes_api.download(video_url, out)
     print(f"\n完成，视频已保存：{out}")
 
 

@@ -87,7 +87,7 @@ def main():
         b64 = item.get("b64_json")
         if url:
             print(f"  下载 [{i+1}/{len(items)}]：{url}")
-            agnes_api.download(url, out, cfg["api_key"])
+            agnes_api.download(url, out)
         elif b64:
             import base64
             from pathlib import Path

@@ -57,7 +57,8 @@ def _get_key_for(region_cfg: dict) -> str:
         f"未找到 {region_cfg['name']} 区域的 API Key。请在运行脚本的终端中设置以下环境变量之一：\n"
         + "\n".join(
             f'  macOS/Linux: export {e}="sk-your-key"\n'
-            f'  Windows: set {e}="sk-your-key"'
+            f'  Windows PowerShell: $env:{e}="sk-your-key"\n'
+            f'  Windows CMD: set {e}=sk-your-key'
             for e in region_cfg["key_envs"]
         )
     )
@@ -94,8 +95,8 @@ def _post(path: str, payload: dict, api_key: str, base_url: str, retries: int = 
                 return json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")
-            # 4xx 不重试（参数/认证错误）
-            if 400 <= e.code < 500:
+            # 429 是频率限制，可退避重试；其余 4xx（参数/认证/额度）重试无用，立即失败
+            if 400 <= e.code < 500 and e.code != 429:
                 raise RuntimeError(f"HTTP {e.code} 请求失败：{body}") from e
             if attempt < retries:
                 wait = min(60, 3 * (2 ** (attempt - 1)))
@@ -143,20 +144,13 @@ def _get(path: str, api_key: str, base_url: str, retries: int = 3) -> dict:
     raise RuntimeError("不应到达此处")
 
 
-def download(url: str, out_path: str, api_key: str = "") -> str:
+def download(url: str, out_path: str) -> str:
     """下载媒体文件到指定路径，返回保存路径。
-    先不带认证头尝试（CDN 公开链接无需认证），401/403 时回退为带认证重试。"""
-    try:
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=300) as resp:
-            data = resp.read()
-    except urllib.error.HTTPError as e:
-        if e.code in (401, 403) and api_key:
-            req = urllib.request.Request(url, headers={"Authorization": f"Bearer {api_key}"})
-            with urllib.request.urlopen(req, timeout=300) as resp:
-                data = resp.read()
-        else:
-            raise
+    CDN 输出链接无需认证，统一不携带 Authorization 头：
+    密钥只应发往 API 端点，跟随重定向时也不会泄漏到第三方域名。"""
+    req = urllib.request.Request(url)
+    with urllib.request.urlopen(req, timeout=300) as resp:
+        data = resp.read()
 
     path = Path(out_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,7 +158,7 @@ def download(url: str, out_path: str, api_key: str = "") -> str:
     return str(path.resolve())
 
 
-def wait_for_video(video_id: str, model: str, api_key: str, api_host: str, interval: int = 2, timeout: int = 600) -> dict:
+def wait_for_video(video_id: str, model: str, api_key: str, api_host: str, interval: int = 10, timeout: int = 600) -> dict:
     """轮询视频任务（GET {api_host}/agnesapi?video_id=...&model_name=...），直至完成或超时。"""
     deadline = time.time() + timeout
     print(f"  任务已提交（video_id={video_id}），开始轮询（每 {interval}s）…")
@@ -177,6 +171,11 @@ def wait_for_video(video_id: str, model: str, api_key: str, api_host: str, inter
                 result = json.loads(resp.read().decode("utf-8"))
         except urllib.error.HTTPError as e:
             body = e.read().decode("utf-8", errors="replace")
+            if e.code == 429:
+                # 轮询过快触发限流：退避后继续等待任务，不中断
+                print(f"  查询被限流（429），{interval * 3}s 后继续轮询…")
+                time.sleep(interval * 3)
+                continue
             if 400 <= e.code < 500:
                 raise RuntimeError(f"HTTP {e.code} 查询失败：{body}") from e
             time.sleep(interval)

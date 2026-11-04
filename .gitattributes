@@ -1,0 +1,12 @@
+# Normalize line endings so the Python scripts behave identically on every OS.
+*.py     text eol=lf
+*.md     text eol=lf
+*.json   text eol=lf
+
+# Binary assets are never touched by text conversion.
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.webp   binary
+*.gif    binary
+*.mp4    binary

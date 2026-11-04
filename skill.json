@@ -1,0 +1,36 @@
+{
+  "name": "agnes-image-video",
+  "displayName": "Agnes Image & Video",
+  "description": "Generate and download images or videos with Agnes AI models (agnes-image-2.5-flash, agnes-video-2.5-flash) through an OpenAI-compatible API on the China (api.agnes-ai.cn) or global (apihub.agnes-ai.com) endpoint. Supports text-to-image, text-to-video and image-to-video with async polling; no image-to-image. 生成图片、生成视频、文生图、图生视频，涉及 Agnes 模型时使用。",
+  "version": "0.1.0",
+  "author": "MONO",
+  "license": "MIT",
+  "homepage": "https://github.com/yinjianjun1/agnes-image-video-skills",
+  "repository": "https://github.com/yinjianjun1/agnes-image-video-skills",
+  "entry": "skills/agnes-image-video/SKILL.md",
+  "python": ">=3.9",
+  "capabilities": [
+    "text-to-image",
+    "text-to-video",
+    "image-to-video"
+  ],
+  "keywords": [
+    "agnes",
+    "agnes-ai",
+    "image-generation",
+    "video-generation",
+    "text-to-image",
+    "text-to-video",
+    "image-to-video",
+    "生成图片",
+    "生成视频",
+    "文生图",
+    "图生视频",
+    "ai-skill"
+  ],
+  "platforms": [
+    "claude",
+    "codebuddy",
+    "workbuddy"
+  ]
+}

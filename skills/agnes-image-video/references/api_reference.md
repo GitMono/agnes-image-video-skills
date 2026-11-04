@@ -11,7 +11,7 @@
 | 区域 | Base URL | 轮询根端点 | 密钥环境变量 | 控制台 |
 |------|---------|-----------|-------------|--------|
 | 中国区 `cn` | `https://api.agnes-ai.cn/v1` | `https://api.agnes-ai.cn/agnesapi` | `AGNES_API_KEY_CN` | platform.agnes-ai.cn |
-| 国际区 `global` | `https://apihub.agnes-ai.com/v1` | `https://apihub.agnes-ai.com/agnesapi` | `AGNES_API_KEY_GLOBAL`（或旧名 `AGNES_API_KEY`） | agnes-ai.com |
+| 国际区 `global` | `https://apihub.agnes-ai.com/v1` | `https://apihub.agnes-ai.com/agnesapi` | `AGNES_API_KEY_GLOBAL` / `AGNES_API_KEY`（两者均支持） | agnes-ai.com |
 
 > 认证：`Authorization: Bearer <key>`。**密钥与端点必须同区**——CN 密钥打到国际区（或反之）都会 401。
 > 视频轮询端点 `/agnesapi` 在**根路径**（不含 `/v1`），与 `/v1/videos` 提交端点域名相同但层级不同。
@@ -24,7 +24,7 @@
 GET {base}/models
 ```
 
-返回当前区域、当前密钥可用的模型 ID 列表。两区列表略有差异（2026-11-04 实测）：
+返回当前区域、当前密钥可用的模型 ID 列表。两区列表略有差异（实测）：
 
 - 中国区 `api.agnes-ai.cn`：`agnes-2.5-flash`、`agnes-2.5-pro`、`agnes-2.5-pro-alpha/beta`、`agnes-3.0-flash`、`agnes-image-2.1-flash`、`agnes-image-2.5-flash`、`agnes-video-2.5`、`agnes-video-2.5-flash`
 - 国际区 `apihub.agnes-ai.com`：额外多一个 `agnes-image-2.0-flash`
@@ -47,8 +47,12 @@ POST {base}/images/generations
 |------|------|------|------|
 | `model` | string | 是 | `agnes-image-2.5-flash`（推荐）/ `agnes-image-2.1-flash` / `agnes-image-2.0-flash`（仅国际区） |
 | `prompt` | string | 是 | 图片描述 |
-| `size` | string | 否 | `512x512` / `1024x1024` / `1920x1080` / `1080x1920` |
+| `size` | string | 否 | `512x512` / `768x768` / `1024x1024` / `1920x1080` / `1080x1920` |
 | `n` | int | 否 | 生成数量，默认 1 |
+
+> 尺寸会被归一化：实测 `512x512` → `1024x1024`，`1920x1080` → `1312x736`。需要精确尺寸请用档位 `2K` + `ratio`，再下游裁剪。
+
+> 本仓库只实现文生图。**图生图（image-to-image）未实现**；正确做法是在 `extra_body.image` 传参考图数组，且**不需要** `tags: ["img2img"]`——官方文档明确要求不要传该字段。
 
 ### 响应
 
@@ -65,7 +69,7 @@ POST {base}/images/generations
 
 ### 下载图片 URL
 
-CDN 公开链接，**无需带 Bearer 认证头**（带认证反而 401）。脚本先无认证尝试，401/403 时回退带认证兜底。
+CDN 公开链接，**无需带 Bearer 认证头**（带认证反而 401）。脚本对下载请求不发送任何密钥，避免跟随重定向时泄漏到第三方域名。
 
 ---
 
@@ -87,7 +91,10 @@ POST {base}/videos
 | `seconds` | string | 否 | 时长，字符串 `"4"`–`"12"`，默认 `"5"`（注意是字符串） |
 | `size` | string | 否 | Flash 模型**固定** `"720P"`，传其他值报 400 |
 | `aspect_ratio` | string | 否 | 默认 `"16:9"`，可 `"9:16"` |
-| `images` | list | `reference` 时必填 | base64 data URL 列表 |
+| `images` | list | `reference` 时必填 | 参考图 URL 或 Data URI Base64 列表（Flash 最多 5 张） |
+
+> **不要传 `num_frames` / `width` / `height` / `fps`**：2.5 契约会直接返回 400。时长只用 `seconds`。`8n+1`、`≤441` 的帧数约束属于旧 v2.0 契约，不适用于 2.5。
+> `mode=keyframe` 时改用 `first_frame` / `last_frame`（两者至少一个），不能与 `images` 混用。
 
 ### 提交响应
 
@@ -109,12 +116,13 @@ GET {api_host}/agnesapi?video_id=<ID>&model_name=<模型>
 | `progress` | 0–100 |
 | `url` | 完成后**顶层** `url` 即视频下载地址 |
 
-轮询默认间隔 2 秒，超时 600 秒。
+轮询默认间隔 10 秒，超时 600 秒。间隔过小（实测 2 秒）必定触发 429 限流；脚本对 429 退避后继续轮询。
 
 ### 常见失败
 
-- `503 video_queue_full`：上游队列容量满（瞬时），脚本对 5xx 与队列满共 8 次指数退避；持续满则换低峰时段，或改用非 Flash 模型 `agnes-video-2.5`（独立队列）。
-- `429`：账号级频率限制（非队列满），报错带重置时间，别盲目重试。
+- `503 video_queue_full`：上游队列容量满（瞬时），脚本对 5xx 与队列满共 8 次指数退避，实测约 4 分 45 秒后放弃；持续满则换低峰时段，或改用非 Flash 模型 `agnes-video-2.5`（独立队列，需该模型有余额）。
+- `429`：查询频率限制（轮询过快）。脚本退避后继续轮询；提交阶段也会退避重试。别用小于 10s 的轮询间隔。
+- `403 insufficient_user_quota`：该区域或该模型余额为 0。实测同一账号 Flash 可提交、非 Flash 直接 403，说明按模型计费。
 
 ---
 
@@ -126,18 +134,21 @@ GET {api_host}/agnesapi?video_id=<ID>&model_name=<模型>
 | 401 `Invalid token` | 密钥与端点跨区，或密钥无效 | 密钥和 Base URL 必须同区 |
 | 403 `insufficient_user_quota` | 该区域配额为 $0 | 本地重试无效，去对应控制台充值 |
 | 404 `model_not_found` | 模型名不存在或该区没有 | 先 `GET /v1/models` 确认该区可用列表 |
-| 429 | 频率限制 | 按报错的重置时间等待 |
+| 429 | 频率限制（轮询过快） | 脚本自动退避后继续；轮询间隔保持 ≥10s |
 | 503 `video_queue_full` | 视频队列满（上游容量限制，非本地问题） | 退避重试；持续满则换时段/模型 |
 | 500 | 服务端错误 | 可重试 |
 
 ---
 
-## 本轮实测结论（2026-11-04）
+## 本轮实测结论
 
 - **国际区（GLOBAL）密钥**：视频返回 403 `insufficient_user_quota`，`remaining: $0.000000`，配额耗尽，视频出不来。
 - **中国区（CN）密钥**：`/v1/models` 与 `/v1/images/generations` 正常（出图成功），但 `/v1/videos` 持续 503 `video_queue_full`。
 - 两区配额相互独立。CN 密钥此前误打到国际区 `apihub.agnes-ai.com` 才会 401，换到 `api.agnes-ai.cn` 即通。
 - 通用技巧：视频队列满时，先用图片模型出静态素材（图片不走视频队列），备着做图生视频。
+- 图片实测：CN 区两次调用各 8–9 秒返回，请求 `512x512` / `1920x1080` 实际输出 `1024x1024` / `1312x736`。
+- 视频实测：CN 区 Flash 能成功提交并拿到 `video_id`，但 2s 轮询立即 429；改 10s 后限流消失。队列持续满时 8 次退避耗时 4 分 45 秒。
+- 模型计费：同一账号 CN 区 Flash 可提交，`agnes-video-2.5` 直接 403（余额 ￥0），说明额度按模型独立计算。
 
 ---
 
@@ -147,4 +158,4 @@ GET {api_host}/agnesapi?video_id=<ID>&model_name=<模型>
 |------|------|
 | `auto`（默认） | 检测到 `AGNES_API_KEY_CN` 走中国区，否则走国际区 |
 | `cn` | 强制中国区 `api.agnes-ai.cn` + `AGNES_API_KEY_CN` |
-| `global` | 强制国际区 `apihub.agnes-ai.com` + `AGNES_API_KEY_GLOBAL`（或 `AGNES_API_KEY`） |
+| `global` | 强制国际区 `apihub.agnes-ai.com` + `AGNES_API_KEY_GLOBAL` 或 `AGNES_API_KEY`（两者均支持） |
